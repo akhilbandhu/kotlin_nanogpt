@@ -15,7 +15,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:multik-core:0.2.2")
     implementation("org.jetbrains.kotlinx:multik-default:0.2.2")
     implementation("com.knuddels:jtokkit:0.6.1")
-    implementation("org.tensorflow:tensorflow-core-platform:0.3.3")
+    implementation("org.tensorflow:tensorflow-core-platform:0.5.0")
+    implementation("org.deeplearning4j:deeplearning4j-keras:0.9.0")
 
     testImplementation(kotlin("test"))
 }

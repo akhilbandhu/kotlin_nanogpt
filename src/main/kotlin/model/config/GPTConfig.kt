@@ -6,6 +6,6 @@ data class GPTConfig(
     val nLayer: Int = 12,
     val nHead: Int = 12,
     val nEmbed: Int = 768,
-    val dropout: Double = 0.0,
+    val dropout: Float = 0.0f,
     val bias: Boolean = true // True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
 )
