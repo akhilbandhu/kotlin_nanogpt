@@ -1,13 +1,5 @@
 package model
 
-import org.tensorflow.Graph
-import org.tensorflow.Operand
-import org.tensorflow.Session
-import org.tensorflow.op.Ops
-import org.tensorflow.op.core.Variable
-import org.tensorflow.op.math.Mean
-import org.tensorflow.types.TFloat32
-
 /**
  * ChatGPT trying to explain this to a 5 yr old:
  * Think of layer normalization like a game where everyone gets a turn to speak equally.
@@ -19,30 +11,50 @@ import org.tensorflow.types.TFloat32
  * This is an operation that normalizes the values in each column of the matrix separately.
  */
 
-class LayerNorm(private val ndim: Int, private val includeBias: Boolean) {
-    private var graph: Graph = Graph()
-    private var tf: Ops = Ops.create(graph)
+import org.deeplearning4j.nn.conf.layers.Layer
+import org.deeplearning4j.nn.layers.normalization.BatchNormalization
+import org.nd4j.linalg.activations.Activation
+import org.tensorflow.Tensor
+import org.tensorflow.op.Ops
+import org.tensorflow.op.core.Variable
+import org.tensorflow.types.TFloat32
 
-    private val weight: Variable<TFloat32> = tf.withName("weight").variable(
-        tf.constant(TFloat32.scalarOf(ndim.toFloat()))
-    )
-    private val bias: Variable<TFloat32>? = if (includeBias) tf.withName("bias").variable(
-        tf.constant(TFloat32.scalarOf(ndim.toFloat()))
-    ) else null
+abstract class LayerNorm(ndim: Int, bias: Boolean) : Layer() {
 
-    fun forward(input: Operand<TFloat32>): Operand<TFloat32> {
-        val mean = tf.math.mean(input, tf.constant(ndim), Mean.keepDims(true))
-        val variance = tf.math.mean(
-            tf.math.squaredDifference(input, mean),
-            tf.constant(ndim),
-            Mean.keepDims(true)
+    private var weight: Variable<TFloat32>
+    private var bias: Variable<TFloat32>?
+
+    init {
+        // Assuming a TensorFlow-like syntax for variable creation
+        val tf = Ops.create()
+        weight =  tf.withName("weight").variable(
+            tf.constant(TFloat32.scalarOf(ndim.toFloat()))
         )
 
-        val normalized = tf.math.div(
-            tf.math.sub(input, mean),
-            tf.math.sqrt(tf.math.add(variance, tf.constant(1e-5f)))
-        )
+        if (bias) {
+            this.bias = tf.withName("bias").variable(tf.constant(TFloat32.scalarOf(ndim.toFloat())))
+        } else {
+            this.bias = null
+        }
+    }
 
-        return tf.math.add(tf.math.mul(normalized, weight), bias ?: tf.constant(0f))
+    fun activate(input: Tensor, training: Boolean): Tensor {
+        val tf = Ops.create()
+
+        // Apply layer normalization
+        val normalizedInput = BatchNormalization
+            .activation(Activation.IDENTITY)
+            .nIn(ndim)
+            .nOut(ndim)
+            .build()
+            .activate(input)
+
+        // Apply scaling and bias (if applicable)
+        val scaledInput = tf.math.mul(normalizedInput, weight.read(tf))
+        return if (bias != null) {
+            tf.math.add(scaledInput, bias!!.read(tf))
+        } else {
+            scaledInput
+        }
     }
 }

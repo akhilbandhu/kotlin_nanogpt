@@ -1,19 +1,5 @@
 package model
 
-import model.config.GPTConfig
-import model.layers.DenseLayer
-import model.layers.DropoutLayer
-import model.utils.MultiHeadAttentionUtils
-import model.utils.MultiHeadAttentionUtils.Companion.reshapeHeads
-import model.utils.MultiHeadAttentionUtils.Companion.splitHeads
-import org.tensorflow.Graph
-import org.tensorflow.Operand
-import org.tensorflow.op.Ops
-import org.tensorflow.op.core.Variable
-import org.tensorflow.op.nn.Softmax
-import org.tensorflow.types.TFloat32
-import kotlin.math.sqrt
-
 /**
  * From https://bbycroft.net/llm
  * The self-attention layer is perhaps the heart of the Transformer and of GPT.
@@ -21,52 +7,87 @@ import kotlin.math.sqrt
  *
  * The self-attention layer is made up of several heads, and we'll focus on one of them for now.
  */
-class CausalSelfAttention(private val config: GPTConfig) {
-    private val graph: Graph = Graph()
-    private val tf: Ops = Ops.create(graph)
+import model.config.GPTConfig
+import org.deeplearning4j.nn.conf.layers.DenseLayer
+import org.deeplearning4j.nn.conf.layers.Layer
+import org.nd4j.linalg.activations.Activation
+import org.nd4j.linalg.api.ndarray.INDArray
+import org.nd4j.linalg.factory.Nd4j
+import org.nd4j.linalg.indexing.NDArrayIndex
+import org.nd4j.linalg.ops.transforms.Transforms.softmax
+import kotlin.math.sqrt
 
-    private val cAttn: DenseLayer // Custom dense layer for key, query, value projections
-    private val cProj: DenseLayer // Custom dense layer for output projection
-    private val attnDropout: DropoutLayer // Custom dropout layer
-    private val residDropout: DropoutLayer // Custom dropout layer
+abstract class CausalSelfAttention(private val config: GPTConfig) : Layer() {
+    // Example translation of key, query, value projections
+    private val cAttn: DenseLayer = DenseLayer.Builder()
+        .nIn(config.nEmbed)
+        .nOut(3 * config.nEmbed)
+        .activation(Activation.IDENTITY)
+        .dropOut(config.dropout)
+        .build()
+    private val cProj: DenseLayer = DenseLayer.Builder()
+        .nIn(config.nEmbed)
+        .nOut(config.nEmbed)
+        .activation(Activation.IDENTITY)
+        .dropOut(config.dropout)
+        .build()
 
-    private val nHead: Int = config.nHead
-    private val nEmbd: Int = config.nEmbd
-    private val dropout: Float = config.dropout
+    fun forward(input: INDArray): INDArray {
+        // Get the shape of the input array
+        val b = input.shape()[0] // Batch size
+        val t = input.shape()[1] // Sequence length
+        val c = input.shape()[2] // Embedding dimensionality
 
-    private val bias: Operand<TFloat32> // Custom implementation for causal mask
+        // Apply the attention linear layer and split the result into query, key, and value
+        val combined = cAttn(input) // Replace with your actual method or layer call
+        val split = combined.reshape(b, t, 3, config.nHead, c / config.nHead)
 
-    init {
-        // Initialization of layers and causal mask
-        cAttn = DenseLayer(nEmbd, 3 * nEmbd, config.bias)
-        cProj = DenseLayer(nEmbd, nEmbd, config.bias)
-        attnDropout = DropoutLayer(dropout)
-        residDropout = DropoutLayer(dropout)
+        val q = split.get(NDArrayIndex.all(), NDArrayIndex.all(), NDArrayIndex.point(0), NDArrayIndex.all(), NDArrayIndex.all())
+        val k = split.get(NDArrayIndex.all(), NDArrayIndex.all(), NDArrayIndex.point(1), NDArrayIndex.all(), NDArrayIndex.all())
+        val v = split.get(NDArrayIndex.all(), NDArrayIndex.all(), NDArrayIndex.point(2), NDArrayIndex.all(), NDArrayIndex.all())
 
-        // Initialize bias here (causal mask)
+        // Reshape and transpose the last two dimensions for q, k, and v
+        val qReshaped = q.permute(0, 2, 1, 3) // (B, nHead, T, hs)
+        val kReshaped = k.permute(0, 2, 1, 3) // (B, nHead, T, hs)
+        val vReshaped = v.permute(0, 2, 1, 3) // (B, nHead, T, hs)
+        // Apply causal attention mechanism
+        // Note: This is a complex operation in the original GPT-2 and would need a more detailed implementation
+        val attentionOutput = scaledDotProductAttention(qReshaped, kReshaped, vReshaped)
+
+        // Output projection
+        return cProj.activate(attentionOutput)
     }
 
-    fun forward(input: Operand<TFloat32>): Operand<TFloat32> {
-        // Assuming input shape is (Batch, Time, Channels)
-        val (B, T, C) = input.shape() // Extract batch size, sequence length, embedding dim
+    private fun scaledDotProductAttention(
+        query: INDArray,
+        key: INDArray,
+        value: INDArray,
+        attnMask: INDArray? = null,
+        dropoutP: Double = 0.0,
+        isCausal: Boolean = false,
+        scale: Double? = null
+    ): INDArray {
+        val depth = query.shape().last().toDouble()
+        val scaleFactor = scale ?: (1.0 / sqrt(depth))
 
-        // Split the projections into query, key, value
-        val (q, k, v) = splitHeads((input), B, T) // Custom function to split and rearrange heads
+        // Transpose the last two dimensions of key
+        val keyT = key.permute(0, 2, 1)
 
-        // Apply causal self-attention
-        val y = if (config.useFlashAttention) {
-            null
-        } else {
-            // Manual implementation of causal attention
-            val att = tf.linalg.matMul(q, k, transposeB = true) * tf.constant(1.0 / sqrt(nEmbd.toDouble()))
-            val maskedAtt = att.maskedFill(bias, Float.NEGATIVE_INFINITY) // Custom method for masking
-            val softmaxAtt = Softmax.create(tf, maskedAtt, axis = -1)
-            val droppedOutAtt = DropoutLayer(softmaxAtt)
-            tf.linalg.matMul(droppedOutAtt, v)
+        val attnWeight = query.mmul(keyT).mul(scaleFactor)
+
+        // Apply causal mask
+        if (isCausal) {
+            val L = query.size(-2)
+            val S = key.size(-2)
+            val causalMask = Nd4j.triu(Nd4j.ones(L, S), 0).mul(-1e9)
+            attnWeight.addi(causalMask)
+        }
+        // Apply attention mask if provided
+        attnMask?.let {
+            attnWeight.addi(it)
         }
 
-        // Reshape and project output
-        val reshapedY = reshapeHeads(y, B, T) // Custom function to reshape heads back
-        return DropoutLayer(DenseLayer(reshapedY))
+        val softmaxWeights = softmax(attnWeight)
+        return softmaxWeights.mmul(value)
     }
 }
