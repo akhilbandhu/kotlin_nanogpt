@@ -9,54 +9,103 @@ package model
  */
 import model.config.GPTConfig
 import org.deeplearning4j.nn.conf.layers.DenseLayer
-import org.deeplearning4j.nn.conf.layers.Layer
-import org.nd4j.linalg.activations.Activation
+import org.deeplearning4j.nn.conf.layers.DropoutLayer
 import org.nd4j.linalg.api.ndarray.INDArray
 import org.nd4j.linalg.factory.Nd4j
 import org.nd4j.linalg.indexing.NDArrayIndex
 import org.nd4j.linalg.ops.transforms.Transforms.softmax
 import kotlin.math.sqrt
 
-abstract class CausalSelfAttention(private val config: GPTConfig) : Layer() {
-    // Example translation of key, query, value projections
-    private val cAttn: DenseLayer = DenseLayer.Builder()
-        .nIn(config.nEmbed)
-        .nOut(3 * config.nEmbed)
-        .activation(Activation.IDENTITY)
-        .dropOut(config.dropout)
-        .build()
-    private val cProj: DenseLayer = DenseLayer.Builder()
-        .nIn(config.nEmbed)
-        .nOut(config.nEmbed)
-        .activation(Activation.IDENTITY)
-        .dropOut(config.dropout)
-        .build()
+class CausalSelfAttention(config: GPTConfig) {
+    private val cAttn: DenseLayer
+    private val cProj: DenseLayer
+    private val attnDropout: DropoutLayer
+    private val residDropout: DropoutLayer
+    private val nHead: Int
+    private val nEmb: Int
+    private val dropout: Double
+    private val bias: INDArray
+    private val cAttnWeight: INDArray = Nd4j.rand(3 * config.nEmbed, config.nEmbed) // Example initialization
+    private val cAttnBias: INDArray? = if (config.bias) Nd4j.rand(3 * config.nEmbed) else null
+    private val cProjWeight: INDArray = Nd4j.rand(config.nEmbed, config.nEmbed) // Example initialization
+    private val cProjBias: INDArray? = if (config.bias) Nd4j.rand(config.nEmbed) else null
+
+    init {
+        require(config.nEmbed % config.nHead == 0) { "Embedding dimension must be divisible by number of heads." }
+
+        nHead = config.nHead
+        nEmb = config.nEmbed
+        dropout = config.dropout
+
+        cAttn = DenseLayer.Builder()
+            .nIn(nEmb)
+            .nOut(3 * nEmb)
+            .biasInit(0.0)
+            .build()
+
+        cProj = DenseLayer.Builder()
+            .nIn(nEmb)
+            .nOut(nEmb)
+            .biasInit(0.0)
+            .build()
+
+        attnDropout = DropoutLayer.Builder(dropout).build()
+        residDropout = DropoutLayer.Builder(dropout).build()
+
+        // Causal mask creation
+        bias = lowerTriangularMatrix(config.blockSize)
+    }
+
+    private fun dropout(x: INDArray, p: Double): INDArray {
+        if (p <= 0.0) return x
+        val mask = Nd4j.rand(x.shape().size).lt(p)
+        return x.mul(mask).div(1.0 - p)
+    }
 
     fun forward(input: INDArray): INDArray {
-        // Get the shape of the input array
-        val b = input.shape()[0] // Batch size
-        val t = input.shape()[1] // Sequence length
-        val c = input.shape()[2] // Embedding dimensionality
+        val B = input.size(0)
+        val T = input.size(1)
+        val C = input.size(2)
 
-        // Apply the attention linear layer and split the result into query, key, and value
-        val combined = cAttn(input) // Replace with your actual method or layer call
-        val split = combined.reshape(b, t, 3, config.nHead, c / config.nHead)
+        // Manual linear transformation for cAttn
+        val combined = input.reshape(B * T, C).mmul(cAttnWeight.transpose())
+        if (cAttnBias != null) combined.addiRowVector(cAttnBias)
+        val reshapedCombined = combined.reshape(B, T, 3 * C)
 
-        val q = split.get(NDArrayIndex.all(), NDArrayIndex.all(), NDArrayIndex.point(0), NDArrayIndex.all(), NDArrayIndex.all())
-        val k = split.get(NDArrayIndex.all(), NDArrayIndex.all(), NDArrayIndex.point(1), NDArrayIndex.all(), NDArrayIndex.all())
-        val v = split.get(NDArrayIndex.all(), NDArrayIndex.all(), NDArrayIndex.point(2), NDArrayIndex.all(), NDArrayIndex.all())
+        // Splitting and reshaping for multi-head attention
+        val splitSize = C / nHead
+        val q = reshapedCombined.get(NDArrayIndex.all(), NDArrayIndex.all(), NDArrayIndex.interval(0, splitSize))
+        val k = reshapedCombined.get(NDArrayIndex.all(), NDArrayIndex.all(), NDArrayIndex.interval(splitSize, 2 * splitSize))
+        val v = reshapedCombined.get(NDArrayIndex.all(), NDArrayIndex.all(), NDArrayIndex.interval(2 * splitSize, 3 * splitSize))
 
-        // Reshape and transpose the last two dimensions for q, k, and v
-        val qReshaped = q.permute(0, 2, 1, 3) // (B, nHead, T, hs)
-        val kReshaped = k.permute(0, 2, 1, 3) // (B, nHead, T, hs)
-        val vReshaped = v.permute(0, 2, 1, 3) // (B, nHead, T, hs)
-        // Apply causal attention mechanism
-        // Note: This is a complex operation in the original GPT-2 and would need a more detailed implementation
-        val attentionOutput = scaledDotProductAttention(qReshaped, kReshaped, vReshaped)
+        // Reshape and transpose for multi-head attention
+        val reshapeAndTranspose = { arr: INDArray ->
+            val newShape = longArrayOf(B, T, nHead.toLong(), splitSize)
+            arr.reshape(*newShape).permute(0, 2, 1, 3)
+        }
+        val qTransposed = reshapeAndTranspose(q)
+        val kTransposed = reshapeAndTranspose(k)
+        val vTransposed = reshapeAndTranspose(v)
 
-        // Output projection
-        return cProj.activate(attentionOutput)
+        // Attention mechanism
+        val y = scaledDotProductAttention(
+            qTransposed,
+            kTransposed,
+            vTransposed,
+            null,
+            dropout,
+            true
+        )
+
+        // Re-assemble and apply output projection
+        val yReassembled = y.permute(0, 2, 1, 3).reshape(B, T, C)
+        val projected = yReassembled.mmul(cProjWeight.transpose())
+        if (cProjBias != null) projected.addiRowVector(cProjBias)
+
+        // Apply dropout to the output
+        return dropout(projected, dropout)
     }
+
 
     private fun scaledDotProductAttention(
         query: INDArray,
@@ -89,5 +138,15 @@ abstract class CausalSelfAttention(private val config: GPTConfig) : Layer() {
 
         val softmaxWeights = softmax(attnWeight)
         return softmaxWeights.mmul(value)
+    }
+
+    private fun lowerTriangularMatrix(size: Int): INDArray {
+        val matrix = Nd4j.zeros(size, size)
+        for (i in 0..<size) {
+            for (j in 0..i) {
+                matrix.putScalar(intArrayOf(i, j), 1.0)
+            }
+        }
+        return matrix
     }
 }

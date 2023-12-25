@@ -5,11 +5,14 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="51f71c36-11b1-479f-a6e4-5ca3d007a91c" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/.idea/uiDesigner.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/build.gradle.kts" beforeDir="false" afterPath="$PROJECT_DIR$/build.gradle.kts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/kotlin/model/Block.kt" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/kotlin/model/Block.kt" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/main/kotlin/model/CausalSelfAttention.kt" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/kotlin/model/CausalSelfAttention.kt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/kotlin/model/GPT.kt" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/kotlin/model/GPT.kt" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/main/kotlin/model/LayerNorm.kt" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/kotlin/model/LayerNorm.kt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main/kotlin/model/config/GPTConfig.kt" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/kotlin/model/config/GPTConfig.kt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/kotlin/model/MultilayerPerceptron.kt" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/kotlin/model/MultilayerPerceptron.kt" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

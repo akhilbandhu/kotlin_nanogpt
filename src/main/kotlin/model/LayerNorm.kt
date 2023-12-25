@@ -1,5 +1,14 @@
 package model
 
+import org.deeplearning4j.nn.conf.layers.samediff.SDLayerParams
+import org.deeplearning4j.nn.conf.layers.samediff.SameDiffLayer
+import org.deeplearning4j.nn.params.DefaultParamInitializer
+import org.nd4j.autodiff.samediff.SDVariable
+import org.nd4j.autodiff.samediff.SameDiff
+import org.nd4j.linalg.api.ndarray.INDArray
+import org.deeplearning4j.nn.conf.inputs.InputType
+
+
 /**
  * ChatGPT trying to explain this to a 5 yr old:
  * Think of layer normalization like a game where everyone gets a turn to speak equally.
@@ -9,52 +18,63 @@ package model
  *
  * One of the steps in a Transformer block is to apply layer normalization to this matrix.
  * This is an operation that normalizes the values in each column of the matrix separately.
+ *
+ * @param nDim Number of dimensions to the layer
+ * @param bias If you need to include bias or not
  */
 
-import org.deeplearning4j.nn.conf.layers.Layer
-import org.deeplearning4j.nn.layers.normalization.BatchNormalization
-import org.nd4j.linalg.activations.Activation
-import org.tensorflow.Tensor
-import org.tensorflow.op.Ops
-import org.tensorflow.op.core.Variable
-import org.tensorflow.types.TFloat32
-
-abstract class LayerNorm(ndim: Int, bias: Boolean) : Layer() {
-
-    private var weight: Variable<TFloat32>
-    private var bias: Variable<TFloat32>?
-
-    init {
-        // Assuming a TensorFlow-like syntax for variable creation
-        val tf = Ops.create()
-        weight =  tf.withName("weight").variable(
-            tf.constant(TFloat32.scalarOf(ndim.toFloat()))
-        )
-
-        if (bias) {
-            this.bias = tf.withName("bias").variable(tf.constant(TFloat32.scalarOf(ndim.toFloat())))
-        } else {
-            this.bias = null
-        }
+class LayerNormalization(
+    private val nDim: Int,
+    private val bias: Boolean
+) : SameDiffLayer() {
+    /**
+     * In this method, you define the parameters and their shapes
+     * For this layer, we have a weight matrix (nIn x nOut) plus a bias array
+     * @param params A helper class that allows you to define the parameters
+     */
+    override fun defineParameters(params: SDLayerParams) {
+        params.addWeightParam(DefaultParamInitializer.GAIN_KEY, nDim.toLong())
+        params.addBiasParam(DefaultParamInitializer.BIAS_KEY, 1, nDim.toLong())
     }
 
-    fun activate(input: Tensor, training: Boolean): Tensor {
-        val tf = Ops.create()
+    /**
+     * In the defineLayer method, you define the actual layer forward pass
+     * For this layer, we are returning out = activationFn( input*weights + bias)
+     *
+     * @param sd         The SameDiff instance for this layer
+     * @param layerInput A SDVariable representing the input activations for the layer
+     * @param paramTable A map of parameters for the layer. These are the SDVariables corresponding to whatever you defined
+     * in the defineParameters method
+     * @return
+     */
+    override fun defineLayer(
+        sd: SameDiff,
+        layerInput: SDVariable,
+        paramTable: Map<String, SDVariable>,
+        mask: SDVariable?
+    ): SDVariable {
+        val weights = paramTable[DefaultParamInitializer.WEIGHT_KEY]
+        val biases = if (bias) paramTable[DefaultParamInitializer.BIAS_KEY] else null
 
-        // Apply layer normalization
-        val normalizedInput = BatchNormalization
-            .activation(Activation.IDENTITY)
-            .nIn(ndim)
-            .nOut(ndim)
-            .build()
-            .activate(input)
+        // Using SameDiff's layerNorm function
+        return sd.nn.layerNorm("layerNorm", layerInput, weights, biases, false, nDim)
+    }
 
-        // Apply scaling and bias (if applicable)
-        val scaledInput = tf.math.mul(normalizedInput, weight.read(tf))
-        return if (bias != null) {
-            tf.math.add(scaledInput, bias!!.read(tf))
-        } else {
-            scaledInput
-        }
+    /**
+     * This method is used to initialize the parameter.
+     * For example, we are setting the bias parameter to 0, and using the specified DL4J weight initialization type
+     * for the weights
+     * @param params Map of parameters. These are the INDArrays corresponding to whatever you defined in the
+     * defineParameters method
+     */
+    override fun initializeParameters(params: Map<String, INDArray>) {
+        params[DefaultParamInitializer.BIAS_KEY]!!.assign(0)
+        initWeights(nDim, nDim, weightInit, params[DefaultParamInitializer.WEIGHT_KEY])
+    }
+
+
+    override fun getOutputType(layerIndex: Int, inputType: InputType): InputType {
+        // Assuming the output type is the same as the input type
+        return inputType
     }
 }

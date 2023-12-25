@@ -18,6 +18,7 @@ dependencies {
     implementation("org.tensorflow:tensorflow-core-platform:0.5.0")
     implementation("org.deeplearning4j:deeplearning4j-core:1.0.0-beta7")
     implementation("org.nd4j:nd4j-native-platform:1.0.0-beta7")
+    implementation("org.junit.jupiter:junit-jupiter-engine:5.6.3")
 
     testImplementation(kotlin("test"))
 }
