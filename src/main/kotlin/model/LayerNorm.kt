@@ -1,13 +1,10 @@
 package model
 
-import org.deeplearning4j.nn.conf.layers.samediff.SDLayerParams
-import org.deeplearning4j.nn.conf.layers.samediff.SameDiffLayer
-import org.deeplearning4j.nn.params.DefaultParamInitializer
-import org.nd4j.autodiff.samediff.SDVariable
-import org.nd4j.autodiff.samediff.SameDiff
-import org.nd4j.linalg.api.ndarray.INDArray
-import org.deeplearning4j.nn.conf.inputs.InputType
-
+import org.tensorflow.Operand
+import org.tensorflow.op.Ops
+import org.tensorflow.types.TFloat32
+import org.tensorflow.types.TInt32
+import org.springframework.stereotype.Component
 
 /**
  * ChatGPT trying to explain this to a 5 yr old:
@@ -23,58 +20,23 @@ import org.deeplearning4j.nn.conf.inputs.InputType
  * @param bias If you need to include bias or not
  */
 
-class LayerNormalization(
-    private val nDim: Int,
-    private val bias: Boolean
-) : SameDiffLayer() {
-    /**
-     * In this method, you define the parameters and their shapes
-     * For this layer, we have a weight matrix (nIn x nOut) plus a bias array
-     * @param params A helper class that allows you to define the parameters
-     */
-    override fun defineParameters(params: SDLayerParams) {
-        params.addWeightParam(DefaultParamInitializer.GAIN_KEY, nDim.toLong())
-        params.addBiasParam(DefaultParamInitializer.BIAS_KEY, 1, nDim.toLong())
-    }
+@Component
+class LayerNorm(private val tf: Ops, private val ndim: Int, private val useBias: Boolean) {
+    private val weight: Operand<TFloat32> = tf.variable(tf.ones(tf.constant(intArrayOf(ndim)), TFloat32::class.java))
+    private val bias: Operand<TFloat32>? = if (useBias) tf.variable(tf.zeros(tf.constant(intArrayOf(ndim)), TFloat32::class.java)) else null
 
-    /**
-     * In the defineLayer method, you define the actual layer forward pass
-     * For this layer, we are returning out = activationFn( input*weights + bias)
-     *
-     * @param sd         The SameDiff instance for this layer
-     * @param layerInput A SDVariable representing the input activations for the layer
-     * @param paramTable A map of parameters for the layer. These are the SDVariables corresponding to whatever you defined
-     * in the defineParameters method
-     * @return
-     */
-    override fun defineLayer(
-        sd: SameDiff,
-        layerInput: SDVariable,
-        paramTable: Map<String, SDVariable>,
-        mask: SDVariable?
-    ): SDVariable {
-        val weights = paramTable[DefaultParamInitializer.WEIGHT_KEY]
-        val biases = if (bias) paramTable[DefaultParamInitializer.BIAS_KEY] else null
-
-        // Using SameDiff's layerNorm function
-        return sd.nn.layerNorm("layerNorm", layerInput, weights, biases, false, nDim)
-    }
-
-    /**
-     * This method is used to initialize the parameter.
-     * For example, we are setting the bias parameter to 0, and using the specified DL4J weight initialization type
-     * for the weights
-     * @param params Map of parameters. These are the INDArrays corresponding to whatever you defined in the
-     * defineParameters method
-     */
-    override fun initializeParameters(params: Map<String, INDArray>) {
-        params[DefaultParamInitializer.BIAS_KEY]!!.assign(0)
-        initWeights(nDim, nDim, weightInit, params[DefaultParamInitializer.WEIGHT_KEY])
-    }
-
-
-    override fun getOutputType(layerIndex: Int, inputType: InputType): InputType {
-        // Assuming the output type is the same as the input type
-        return inputType
+    fun forward(input: Operand<TFloat32>): Operand<TFloat32> {
+        val axes = tf.constant(intArrayOf(-1))
+        val mean = tf.math.mean(input, axes)
+        val variance = tf.math.mean(tf.math.square(tf.math.sub(input, mean)), axes)
+        val normalized = tf.math.div(
+            tf.math.sub(input, mean),
+            tf.math.sqrt(tf.math.add(variance, tf.constant(1e-5f)))
+        )
+        return if (bias != null) {
+            tf.math.add(tf.math.mul(weight, normalized), bias)
+        } else {
+            tf.math.mul(weight, normalized)
+        }
     }
 }

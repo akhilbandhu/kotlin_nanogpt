@@ -1,11 +1,13 @@
 package data
 
+import org.springframework.stereotype.Component
 import java.io.File
 import java.net.URL
 import java.net.HttpURLConnection
 import com.knuddels.jtokkit.Encodings.newDefaultEncodingRegistry
 import com.knuddels.jtokkit.api.ModelType
 
+@Component
 class Prepare {
     fun prepareShakespeare() {
         val currentDir = File("").absolutePath

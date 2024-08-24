@@ -1,7 +1,11 @@
 import data.Prepare
+import org.springframework.boot.CommandLineRunner
+import org.springframework.stereotype.Component
 
-fun main() {
-    val prepare = Prepare()
-    println("Hello World!")
-    println(prepare.prepareShakespeare())
+@Component
+class Main(private val prepare: Prepare) : CommandLineRunner {
+    override fun run(vararg args: String?) {
+        println("Hello World!")
+        prepare.prepareShakespeare()
+    }
 }
